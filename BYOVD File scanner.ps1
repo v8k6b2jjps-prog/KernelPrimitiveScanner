@@ -560,30 +560,39 @@ function Get-DriverImports {
 function Scan-DriverPrimitive {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $false)]
-        [switch]$System32,
-
-        [Parameter(Mandatory = $false)]
-        [switch]$Drivers,
-
-        [Parameter(Mandatory = $false)]
-        [switch]$ProgramFiles,
-
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, Position = 0)]
         [string]$CustomPath,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, Position = 1)]
+        [switch]$System32,
+
+        [Parameter(Mandatory = $false, Position = 2)]
+        [switch]$Drivers,
+
+        [Parameter(Mandatory = $false, Position = 3)]
+        [switch]$ProgramFiles,
+
+        [Parameter(Mandatory = $false, Position = 4)]
         [switch]$NoRecurse,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, Position = 5)]
         [switch]$IncludeAll,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, Position = 6)]
+        [switch]$ValidateLolDrivers,
+
+        [Parameter(Mandatory = $false, Position = 7)]
+        [switch]$ValidateMSBlockPolicy,
+
+        [Parameter(Mandatory = $false, Position = 8)]
         [ValidateSet('Basic', 'Extended')]
         [string]$ScanMode = 'Basic'
     )
 
     begin {
+        # Force TLS 1.2/1.3 for secure downloads
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
         # --- SHORTER LIST (The Most Commonly Attacked Primitives + Process Termination) ---
         $BasicList = @(
             # Physical Memory Mapping (The #1 target for arbitrary read/write)
@@ -643,9 +652,100 @@ function Scan-DriverPrimitive {
             [System.StringComparer]::OrdinalIgnoreCase
         )
 
+        # --- LOLDrivers API Integration ---
+        $LolHashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $LolNames  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $LolMetadata = @{}
+
+        if ($ValidateLolDrivers) {
+            Write-Host "[*] Fetching latest LOLDrivers database..." -ForegroundColor Cyan
+            try {
+                $RawText = Invoke-RestMethod -Uri "https://www.loldrivers.io/api/drivers.json" -ErrorAction Stop
+                
+                Add-Type -AssemblyName System.Web.Extensions
+                $Serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+                $Serializer.MaxJsonLength = 2147483647 
+                
+                $LolData = $Serializer.DeserializeObject($RawText)
+
+                foreach ($Driver in $LolData) {
+                    if ($Driver.ContainsKey("Tags") -and $Driver["Tags"] -is [System.Collections.IEnumerable]) {
+                        foreach ($Tag in $Driver["Tags"]) {
+                            if ($Tag -like "*.sys") { [void]$LolNames.Add($Tag) }
+                        }
+                    }
+                    
+                    if ($Driver.ContainsKey("KnownVulnerableSamples") -and $Driver["KnownVulnerableSamples"] -is [System.Collections.IEnumerable]) {
+                        $CategoryStr = if ($Driver.ContainsKey("Category")) { $Driver["Category"] } else { "Unknown" }
+                        $DescStr = "N/A"
+                        if ($Driver.ContainsKey("Commands") -and $Driver["Commands"] -is [System.Collections.IDictionary]) {
+                            if ($Driver["Commands"].ContainsKey("Description")) { $DescStr = $Driver["Commands"]["Description"] }
+                        }
+                        $DriverId = if ($Driver.ContainsKey("Id")) { $Driver["Id"] } else { "" }
+
+                        foreach ($Sample in $Driver["KnownVulnerableSamples"]) {
+                            if ($Sample -is [System.Collections.IDictionary]) {
+                                if ($Sample.ContainsKey("Filename") -and $Sample["Filename"]) { 
+                                    [void]$LolNames.Add($Sample["Filename"]) 
+                                }
+                                
+                                @("SHA256", "SHA1", "MD5") | ForEach-Object {
+                                    if ($Sample.ContainsKey($_) -and $Sample[$_]) {
+                                        $HashStr = $Sample[$_].ToString()
+                                        [void]$LolHashes.Add($HashStr)
+                                        $LolMetadata[$HashStr.ToLower()] = @{
+                                            Category    = $CategoryStr
+                                            Description = $DescStr
+                                            Id          = $DriverId
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Write-Host "[+] Successfully indexed $($LolHashes.Count) LOLDrivers signatures." -ForegroundColor Green
+            } catch {
+                Write-Warning "Failed to contact or parse LOLDrivers API. Error: $_"
+            }
+        }
+
+        # --- Microsoft Vulnerable Driver Blocklist Integration ---
+        $MSBlockedHashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        if ($ValidateMSBlockPolicy) {
+            Write-Host "[*] Fetching and parsing Microsoft Vulnerable Driver Blocklist..." -ForegroundColor Cyan
+            try {
+                $DestinationZip = "$env:TEMP\VulnerableDriverBlockList.zip"
+                $ExtractPath = "$env:TEMP\VulnerableDriverBlockList_Extracted"
+        
+                Invoke-WebRequest -Uri "https://aka.ms/VulnerableDriverBlockList" -OutFile $DestinationZip -ErrorAction Stop
+        
+                if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force }
+                Expand-Archive -Path $DestinationZip -DestinationPath $ExtractPath -Force
+        
+                $XmlFile = Get-ChildItem -Path $ExtractPath -Filter "DriverPolicy_Enforced.xml" -Recurse | Select-Object -First 1
+                if ($null -ne $XmlFile) {
+                    [xml]$MSDoc = Get-Content -Path $XmlFile.FullName -Raw
+                    foreach ($Rule in $MSDoc.SiPolicy.FileRules.Deny) {
+                        # Ensure it is a 64-character SHA256 hash AND explicitly NOT a Page Hash
+                        if ($Rule.Hash -and $Rule.Hash.Length -eq 64 -and $Rule.FriendlyName -match 'Hash Sha256' -and $Rule.FriendlyName -notmatch 'Page') {
+                            [void]$MSBlockedHashes.Add($Rule.Hash)
+                        }
+                    }
+                    Write-Host "[+] Successfully indexed $($MSBlockedHashes.Count) standard Microsoft SHA256 signatures." -ForegroundColor Green
+                } else {
+                    Write-Warning "DriverPolicy_Enforced.xml was not located."
+                }
+        
+                Remove-Item $DestinationZip -Force -ErrorAction SilentlyContinue
+                Remove-Item $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-Warning "Failed to dynamically download or unpack Microsoft block definitions. Error: $_"
+            }
+        }
+
         # Build target paths array based on input parameters
         $TargetPaths = [System.Collections.Generic.List[string]]::new()
-
         if ($System32)     { $TargetPaths.Add("$env:SystemRoot\System32") }
         if ($Drivers)      { $TargetPaths.Add("$env:SystemRoot\System32\drivers") }
         if ($ProgramFiles) { $TargetPaths.Add($env:ProgramFiles); $TargetPaths.Add(${env:ProgramFiles(x86)}) }
@@ -683,38 +783,81 @@ function Scan-DriverPrimitive {
                         }
                     }
 
-                    if ($FoundPrimitives) {
+                    # Calculate Hash early to check both verification paths
+                    $HashSHA256 = "UNKNOWN"
+                    $IsLolMatch = $false
+                    $IsMSMatch  = $false
+                    $LolMatchDetails = $null
+
+                    try {
+                        $HashSHA256 = (Get-FileHash -Path $File.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
+                        
+                        # Validate Against LOLDrivers
+                        if ($ValidateLolDrivers -and $LolHashes.Contains($HashSHA256)) {
+                            $IsLolMatch = $true
+                            $LolMatchDetails = $LolMetadata[$HashSHA256.ToLower()]
+                        }
+
+                        # Validate Against Microsoft Blocklist
+                        if ($ValidateMSBlockPolicy -and $MSBlockedHashes.Contains($HashSHA256)) {
+                            $IsMSMatch = $true
+                        }
+                    } catch {
+                        $HashSHA256 = "LOCKED / ACCESS DENIED"
+                    }
+
+                    # Fallback lookup match by name for LOLDrivers
+                    if ($ValidateLolDrivers -and -not $IsLolMatch -and $LolNames.Contains($File.Name)) {
+                        $IsLolMatch = $true
+                    }
+
+                    # Output evaluation criteria matches
+                    if ($FoundPrimitives -or $IsLolMatch -or $IsMSMatch) {
                         $VersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($File.FullName)
                         $CompanyName = $VersionInfo.CompanyName
 
-                        if (-not $IncludeAll) {
+                        # Filtering engine configuration parameters
+                        if (-not $IncludeAll -and -not $IsLolMatch -and -not $IsMSMatch) {
                             if ([string]::IsNullOrWhiteSpace($CompanyName) -or $CompanyName -match "Microsoft") {
                                 return
                             }
                         }
 
-                        $Hash = try {
-                            (Get-FileHash -Path $File.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
-                        } catch {
-                            "LOCKED / ACCESS DENIED"
+                        Write-Host "--------------------------------------------------" -ForegroundColor Gray
+                        
+                        if ($IsLolMatch) {
+                            Write-Host "[!!!] MATCHED LOLDRIVERS DATABASE [!!!]" -ForegroundColor Magenta
+                            if ($LolMatchDetails) {
+                                Write-Host "CATEGORY:  $($LolMatchDetails.Category.ToUpper())" -ForegroundColor Green
+                                Write-Host "DETAILS:   $($LolMatchDetails.Description)" -ForegroundColor Green
+                            }
                         }
 
-                        Write-Host "--------------------------------------------------" -ForegroundColor Gray
+                        if ($IsMSMatch) {
+                            Write-Host "[!!!] MATCHED OFFICIAL MICROSOFT DRIVER BLOCKLIST [!!!]" -ForegroundColor Black -BackgroundColor DarkYellow
+                        }
+
                         Write-Host "SCAN MODE: [$ScanMode]" -ForegroundColor DarkCyan
                         Write-Host "PATH:      $($File.FullName)" -ForegroundColor Cyan
                         Write-Host "DRIVER:    $($File.Name)"
                         Write-Host "COMPANY:   $($CompanyName)"
                         Write-Host "INFO:      $($VersionInfo.FileDescription)"
-                        Write-Host "SHA256:    $Hash" -ForegroundColor DarkGray
-                        Write-Host "IMPORTS:" -ForegroundColor Yellow
-                        foreach ($Primitive in $FoundPrimitives) {
-                            Write-Host "  --> $Primitive" -ForegroundColor Yellow
+                        Write-Host "SHA256:    $HashSHA256" -ForegroundColor DarkGray
+                        
+                        if ($FoundPrimitives) {
+                            Write-Host "SUSPICIOUS IMPORTS:" -ForegroundColor Yellow
+                            foreach ($Primitive in $FoundPrimitives) {
+                                Write-Host "  --> $Primitive" -ForegroundColor Yellow
+                            }
+                        } else {
+                            Write-Host "IMPORTS: No target primitives matched, but found inside validation databases." -ForegroundColor Gray
                         }
                     }
                 } catch {
                     return
                 }
             }
+
         }
     }
 }
