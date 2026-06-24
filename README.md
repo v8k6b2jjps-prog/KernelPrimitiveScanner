@@ -1,26 +1,49 @@
-# BYOVD File Scanner
+# 🛡️ BYOVD Kernel Primitive Scanner
 
-A PowerShell security utility designed to scan directories for Bring Your Own Vulnerable Driver (BYOVD) vulnerabilities. It parses the Import Address Table (IAT) of Portable Executable (PE) driver files to detect highly abused kernel primitives.
+A high-fidelity defensive security and forensic triage utility designed to identify Bring Your Own Vulnerable Driver (BYOVD) threats. The utility performs deep structural parsing of Portable Executable (PE) headers and maps the Import Address Table (IAT) of Windows driver files (`.sys`) to flag dangerous kernel-mode primitives commonly weaponized by threat actors to blind security agents, bypass Windows Kernel Driver Signing Policy (kmci), and achieve arbitrary Ring 0 memory execution.
 
-## Features
-- Inspects both 32-bit and 64-bit driver structures by directly parsing the PE headers.
-- Identifies critical Ring 0 exploitation primitives including physical memory mapping, direct kernel copying, CPU register modifications, and process termination.
-- Offers two scanning depths: Basic (most common abuse targets) and Extended (rootkit-style security callback removal, hardware port I/O, and advanced mapping).
-- Automatically filters out legitimate Microsoft drivers by default to keep the focus strictly on potential third-party risks.
-- Collects crucial telemetry including file descriptions, company signatures, and SHA256 hashes for immediate threat intelligence cross-referencing.
+---
 
-## Monitored Directories
-By default, the script scans the most vulnerable storage points for third-party kernel code:
-- C:\Windows\System32
-- C:\Windows\System32\drivers
-- C:\Program Files
-- C:\Program Files (x86)
+## 🚀 Core Capabilities
 
-## Parameters
-- System32: Audits the System32 directory exclusively.
-- Drivers: Audits the drivers directory exclusively.
-- ProgramFiles: Focuses entirely on user-installed application paths.
-- CustomPath: Restricts execution to a user-provided target directory.
-- NoRecurse: Disables recursive deep-folder checking.
-- IncludeAll: Disables vendor filtering to include Microsoft-signed modules in the report.
-- ScanMode: Toggles the definition lookup list between 'Basic' and 'Extended'.
+*   **🔍 Low-Level PE Structural Auditing:** Programmatically walks the DOS header, validates the NT signature, calculates section alignments dynamically, and walks the Data Directories to pull raw imports directly out of the file layout without relying on fragile system utilities or external binary dependencies.
+*   **💻 Bi-Directional Architecture Support:** Fully compatible with both 32-bit (`I386`) and 64-bit (`AMD64`) kernel modules via runtime dynamic type alignment matching the target binary's structural architecture.
+*   **🧼 Noise Reduction & Vendor Filtering:** Automatically excludes standard Microsoft-signed binaries from the final report by inspecting metadata attributes, allowing security engineers to instantly focus triage efforts purely on third-party signed driver packages.
+*   **📊 Cryptographic & Forensic Telemetry:** Generates actionable indicator data on demand, combining file structural properties, publisher records, functional descriptions, and cryptographic SHA256 hashes for immediate SIEM ingestion or threat intelligence lookup.
+
+---
+
+## 🎯 Targeted Kernel Primitives
+
+### ⚡ Basic Mode (High-Severity Abuse Vectors)
+*   **🧠 Arbitrary Physical Mapping:** Detection of functions like `MmMapIoSpace`, `MmMapIoSpaceEx`, `ZwMapViewOfSection`, and `NtMapViewOfSection` used to bypass page table protections and manipulate physical memory directly.
+*   **📝 Kernel Memory Copying:** Flagging `MmCopyVirtualMemory` and `MmCopyMemory` routines which allow cross-process address manipulation from userland into kernel-space.
+*   **⚙️ CPU Control Register Manipulation:** Auditing low-level intrinsics like `__writemsr`, `__writecr3`, and `__writecr4` that can be hijacked to mask execution paths, compromise hardware page isolation, or completely disable kernel protections.
+*   **❌ Aggressive Process Blinding:** Spotting the direct imports of `ZwTerminateProcess` and `NtTerminateProcess` used by rootkits to kill active Endpoint Detection and Response (EDR) or Antivirus processes from the highest privilege ring.
+
+### 🧪 Extended Mode (Advanced Rootkit & Blinding Behaviors)
+*   **💾 Alternative Memory Allocations:** Extends the detection logic to monitor advanced page pinning, address space translations, and memory mapping mechanisms such as `MmMapLockedPagesSpecifyCache` or pool allocations like `ExAllocatePool2`.
+*   **🔌 Direct Hardware I/O Interaction:** Flags legacy and microcode-level operations including direct port writes (`WRITE_PORT_UCHAR`, `WRITE_PORT_ULONG`) which can bypass traditional OS abstractions.
+*   **🙈 Security Callback Blinding:** Detects infrastructure-level routine manipulation functions such as `CmUnRegisterCallback`, `ObUnRegisterCallbacks`, and `PsSetCreateProcessNotifyRoutineEx` which are actively abused by offensive tools to strip system callbacks and effectively blind the host EDR telemetry stream.
+
+---
+
+## 📂 Execution Vectors & Defaults
+
+When run with standard configurations, the scanner acts as an automated wide-spectrum hunter, recursively examining the primary paths where third-party software places kernel-mode execution packages:
+*   📁 `C:\Windows\System32`
+*   📁 `C:\Windows\System32\drivers`
+*   📁 `C:\Program Files`
+*   📁 `C:\Program Files (x86)`
+
+---
+
+## ⚙️ Parameters Reference
+
+*   **🛠️ `System32`**: Limits scope strictly to core local configuration binaries inside the System32 directory.
+*   **🗄️ `Drivers`**: Targets the active kernel driver repository folder explicitly.
+*   **💻 `ProgramFiles`**: Sweeps local software installation targets for userland-dropped third-party driver packages.
+*   **🎯 `CustomPath`**: Overrides default sweep behavior to execute localized forensic operations against a specified folder or staging root.
+*   **⏹️ `NoRecurse`**: Restricts the folder parser to the top-level directory context, skipping deeply nested directory layers.
+*   **🔓 `IncludeAll`**: Disables the Microsoft vendor suppression filter, enabling a complete system-wide baseline report.
+*   **🔮 `ScanMode`**: Configures the underlying dictionary assessment architecture to run in either `Basic` triage mode or the comprehensive `Extended` hunting mode.
