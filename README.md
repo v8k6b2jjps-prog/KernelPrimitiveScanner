@@ -46,4 +46,6 @@ When run with standard configurations, the scanner acts as an automated wide-spe
 *   **🎯 `CustomPath`**: Overrides default sweep behavior to execute localized forensic operations against a specified folder or staging root.
 *   **⏹️ `NoRecurse`**: Restricts the folder parser to the top-level directory context, skipping deeply nested directory layers.
 *   **🔓 `IncludeAll`**: Disables the Microsoft vendor suppression filter, enabling a complete system-wide baseline report.
+*   **🔮 `ValidateLolDrivers`**: Validate Against Block list From LolDrivers Site 
+*   **🔮 `ValidateMSBlockPolicy`**: Validate Against MS Block list Package
 *   **🔮 `ScanMode`**: Configures the underlying dictionary assessment architecture to run in either `Basic` triage mode or the comprehensive `Extended` hunting mode.
