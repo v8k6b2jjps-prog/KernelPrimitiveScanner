@@ -50,22 +50,39 @@ When run with standard configurations, the scanner acts as an automated wide-spe
 *   **📜 `ValidateMSBlockPolicy`**: Checks system drivers against the official Microsoft Recommended Driver Block Rules to ensure compliance with enterprise-grade hardening policies.
 *   **🔍 `ScanMode`**: Configures the underlying dictionary assessment architecture to run in either `Basic` triage mode or the comprehensive `Extended` hunting mode.
 
-## 💻 Usage Examples
+## 💻 Production Triage & Threat Hunting Examples
 
-### Thorough Userland Hunt
-Sweeps third-party application installations in deep hunting mode, validating signatures against online known-vulnerable databases:
-```powershell
-Scan-DriverPrimitive -ProgramFiles -ScanMode Extended -ValidateLolDrivers
-```
+### 🎯 Scenario 1: Proactive Enterprise Thread Hunt (Userland Focus)
+Sweeps high-risk endpoint software installations (browsers, local database tools, VPN clients) using aggressive runtime assessment rules. It pairs the high-fidelity deep engine with the online Living Off the Land Drivers database to immediately isolate known leaked or vulnerable third-party binaries.
 
-### Core System Validation
-Performs a fast triage scan across core operating system files using the local Microsoft hardening policy blocklist:
-```powershell
+*   ⚡ Velocity Expectation: Moderate to slow depending on disk size.
+*   📡 Telemetry Output: High density structural matches and SHA256 hashes.
+
+Scan-DriverPrimitive -ProgramFiles -ScanMode Extended -ValidateLolDrivers -IncludeAll
+
+
+### 🛡️ Scenario 2: Rapid Automated Tier-1 Triage (Core OS Assets)
+Executes a highly lightweight baseline assessment optimized for rapid incident management playbooks or automated CI pipeline integrity tests. It validates the local System32 directory structures strictly against the hardware enforcement driver blocklist configuration provided by Microsoft, suppressing verified vendor signatures to keep output signal-to-noise ratios crisp.
+
+*   ⚡ Velocity Expectation: Rapid (typically under 60 seconds).
+*   📡 Telemetry Output: Low density, exception-only alerts flagging hardening non-compliance.
+
 Scan-DriverPrimitive -System32 -ScanMode Basic -ValidateMSBlockPolicy
-```
 
-### Targeted Staging Triaging
-Executes an architecture and primitive extraction sweep against a specific forensic drop-folder without following nested paths:
-```powershell
-Scan-DriverPrimitive -CustomPath "C:\Forensics\Staging" -NoRecurse -ScanMode Extended -IncludeAll
-```
+
+### 🧪 Scenario 3: Targeted Post-Exploitation Forensic IR Sweep
+Designed for point-in-time dead-box triage when a security analyst isolates a specific payload drop zone or a non-standard application execution directory. This configuration enforces rigid operational boundaries by explicitly disabling multi-layer file tree recursion, ensuring your hunting actions remain targeted, predictable, and clean.
+
+*   ⚡ Velocity Expectation: Instantaneous.
+*   📡 Telemetry Output: Full metadata and raw Import Address Table (IAT) primitive analysis of the targeted folder.
+
+Scan-DriverPrimitive -CustomPath "C:\Forensics\Staging\MalwareDrop" -NoRecurse -ScanMode Extended -IncludeAll
+
+
+### 📊 Scenario 4: Wide-Spectrum Baseline Extraction (Gold Image Auditing)
+Sweeps both standard system repositories and userland application folders simultaneously. This wide-spectrum configuration bypasses traditional vendor suppression rules to output a complete inventory of every non-Microsoft kernel driver asset present across the host, establishing a definitive forensic golden baseline.
+
+*   ⚡ Velocity Expectation: Slow, exhaustive drive-wide interrogation.
+*   📡 Telemetry Output: Comprehensive CSV or JSON telemetry dataset containing every third-party cryptographic and PE metadata asset discovered.
+
+Scan-DriverPrimitive -System32 -Drivers -ProgramFiles -ScanMode Extended -IncludeAll
