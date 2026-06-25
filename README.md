@@ -49,3 +49,23 @@ When run with standard configurations, the scanner acts as an automated wide-spe
 *   **🛡️ `ValidateLolDrivers`**: Cross-references discovered drivers against the Living Off the Land Drivers (LOLDrivers) database to flag known vulnerable or malicious binaries.
 *   **📜 `ValidateMSBlockPolicy`**: Checks system drivers against the official Microsoft Recommended Driver Block Rules to ensure compliance with enterprise-grade hardening policies.
 *   **🔍 `ScanMode`**: Configures the underlying dictionary assessment architecture to run in either `Basic` triage mode or the comprehensive `Extended` hunting mode.
+
+## 💻 Usage Examples
+
+### Thorough Userland Hunt
+Sweeps third-party application installations in deep hunting mode, validating signatures against online known-vulnerable databases:
+```powershell
+Scan-DriverPrimitive -ProgramFiles -ScanMode Extended -ValidateLolDrivers
+```
+
+### Core System Validation
+Performs a fast triage scan across core operating system files using the local Microsoft hardening policy blocklist:
+```powershell
+Scan-DriverPrimitive -System32 -ScanMode Basic -ValidateMSBlockPolicy
+```
+
+### Targeted Staging Triaging
+Executes an architecture and primitive extraction sweep against a specific forensic drop-folder without following nested paths:
+```powershell
+Scan-DriverPrimitive -CustomPath "C:\Forensics\Staging" -NoRecurse -ScanMode Extended -IncludeAll
+```
