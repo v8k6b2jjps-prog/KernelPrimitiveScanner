@@ -13,6 +13,15 @@ A high-fidelity defensive security and forensic triage utility designed to ident
 
 ---
 
+## 🧠 Primitive Threat Score (PTS) System
+
+*  **📊 Quantitative Risk Assessment:** Calculates a standardized risk metric from 0 to 10 by performing a weighted analysis of imported kernel-mode primitives, allowing security teams to immediately prioritize forensic triage based on the identified exploit vectors.
+*  **⚖️ Weighted Abuse Profiling:** Assigns distinct severity values to primitives based on their potential for weaponization, with critical weightings for routines capable of security callback blinding, physical memory manipulation, and direct hardware interaction.
+*  **🔍 Risk-Based Filtering:** Enables automated triage workflows by utilizing a configurable threshold system, ensuring that analysts focus exclusively on high-risk binaries that meet or exceed predefined critical danger levels.
+*  **📈 Severity Categorization:** Provides immediate operational insight by mapping raw technical findings into actionable risk tiers: 0 (Safe/Standard), 1–3 (Low Risk), 4–7 (Elevated Risk), and 8–10 (Critical Risk), facilitating rapid incident response and binary isolation.
+
+---
+
 ## 🎯 Targeted Kernel Primitives
 
 ### ⚡ Basic Mode (High-Severity Abuse Vectors)
