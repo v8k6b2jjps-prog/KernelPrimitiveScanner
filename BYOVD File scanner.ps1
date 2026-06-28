@@ -647,6 +647,47 @@ function Scan-DriverPrimitive {
             'Extended' { $BasicList + $ExtendedExtensions }
         }
 
+        # --- SCORING WEIGHTS ENGINE (10 = Worst, 1 = OK) ---
+        $ScoringEngine = @{
+            # Physical Memory Mapping & User Space Exposure
+            "MmMapIoSpace" = 10; "MmMapIoSpaceEx" = 10; "ZwMapViewOfSection" = 10; "NtMapViewOfSection" = 10;
+            "MmMapLockedPages" = 10; "MmMapLockedPagesSpecifyCache" = 10; "MmMapLockedPagesWithReservedMapping" = 10;
+            "MmMapUserAddressesToPageDirectory" = 10; "MmMapVideoDisplay" = 10;
+
+            # Process Termination & EDR Callback Disabling
+            "ZwTerminateProcess" = 10; "NtTerminateProcess" = 10;
+            "CmUnRegisterCallback" = 10; "ObUnRegisterCallbacks" = 10;
+
+            # CPU Control & Register Writes (Hijacking Kernel Flow)
+            "__writemsr" = 9; "__writecr3" = 9; "__writecr4" = 9; "__writecr0" = 9; "__writecr2" = 9; "__writecr8" = 9;
+
+            # Memory Manipulation / Reading & Copying Virtual Space
+            "MmCopyVirtualMemory" = 8; "MmCopyMemory" = 8;
+
+            # Direct Hardware Port Access / Outbound Writes
+            "WRITE_PORT_UCHAR" = 7; "WRITE_PORT_USHORT" = 7; "WRITE_PORT_ULONG" = 7;
+            "WRITE_PORT_BUFFER_UCHAR" = 7; "WRITE_PORT_BUFFER_USHORT" = 7; "WRITE_PORT_BUFFER_ULONG" = 7;
+            "READ_PORT_UCHAR" = 6; "READ_PORT_USHORT" = 6; "READ_PORT_ULONG" = 6;
+            "READ_PORT_BUFFER_UCHAR" = 6; "READ_PORT_BUFFER_USHORT" = 6; "READ_PORT_BUFFER_ULONG" = 6;
+            "__readmsr" = 6; "__readcr0" = 6; "__readcr2" = 6; "__readcr8" = 6;
+
+            # Threat / Process & Thread Monitoring Manipulation
+            "ZwTerminateThread" = 5; "PsTerminateSystemThread" = 5;
+            "PsSetCreateProcessNotifyRoutine" = 5; "PsSetCreateProcessNotifyRoutineEx" = 5;
+            "PsSetCreateThreadNotifyRoutine" = 5; "PsSetLoadImageNotifyRoutine" = 5;
+
+            # API Resolvers & Open Handle Lookups
+            "MmGetSystemRoutineAddress" = 4; "ObReferenceObjectByName" = 4; "IoGetDeviceObjectPointer" = 4;
+            "ObOpenObjectByPointer" = 4; "ObReferenceObjectByHandle" = 4; "PsLookupProcessByProcessId" = 4;
+            "PsLookupThreadByThreadId" = 4; "ZwOpenProcess" = 4;
+
+            # Memory Allocation & Information Queries
+            "ExAllocatePool" = 2; "ExAllocatePoolWithTag" = 2; "ExAllocatePool2" = 2;
+            "MmGetPhysicalAddress" = 2; "MmGetVirtualForPhysical" = 2; "MmGetPhysicalMemoryRanges" = 2;
+            "MmIsAddressValid" = 2; "MmAllocatePagesForMdlEx" = 2; "MmAllocateMappingAddress" = 2;
+            "MmFreeMappingAddress" = 2; "MmUnmapVideoDisplay" = 2;
+        }
+
         $BYOVDPrimitives = [System.Collections.Generic.HashSet[string]]::new(
             [string[]]$SelectedArray, 
             [System.StringComparer]::OrdinalIgnoreCase
@@ -727,7 +768,6 @@ function Scan-DriverPrimitive {
                 if ($null -ne $XmlFile) {
                     [xml]$MSDoc = Get-Content -Path $XmlFile.FullName -Raw
                     foreach ($Rule in $MSDoc.SiPolicy.FileRules.Deny) {
-                        # Ensure it is a 64-character SHA256 hash AND explicitly NOT a Page Hash
                         if ($Rule.Hash -and $Rule.Hash.Length -eq 64 -and $Rule.FriendlyName -match 'Hash Sha256' -and $Rule.FriendlyName -notmatch 'Page') {
                             [void]$MSBlockedHashes.Add($Rule.Hash)
                         }
@@ -744,7 +784,7 @@ function Scan-DriverPrimitive {
             }
         }
 
-        # Build target paths array based on input parameters
+        # Build target paths array
         $TargetPaths = [System.Collections.Generic.List[string]]::new()
         if ($System32)     { $TargetPaths.Add("$env:SystemRoot\System32") }
         if ($Drivers)      { $TargetPaths.Add("$env:SystemRoot\System32\drivers") }
@@ -777,9 +817,18 @@ function Scan-DriverPrimitive {
                     $Imports = Get-DriverImports -DllName $File.FullName -ErrorAction SilentlyContinue
                     if ($null -eq $Imports) { return }
 
+                    # Track findings and calculate high score dynamically
+                    $CalculatedScore = 1
                     $FoundPrimitives = foreach ($Match in $Imports) {
                         if ($BYOVDPrimitives.Contains($Match.ImportedFunction)) {
-                            "[from $($Match.SourceModule)] -> $($Match.ImportedFunction)"
+                            # Fetch internal primitive evaluation score
+                            $MatchScore = 1
+                            if ($ScoringEngine.ContainsKey($Match.ImportedFunction)) {
+                                $MatchScore = $ScoringEngine[$Match.ImportedFunction]
+                            }
+                            if ($MatchScore -gt $CalculatedScore) { $CalculatedScore = $MatchScore }
+
+                            "[from $($Match.SourceModule)] -> $($Match.ImportedFunction) (Threat: $MatchScore)"
                         }
                     }
 
@@ -811,6 +860,9 @@ function Scan-DriverPrimitive {
                         $IsLolMatch = $true
                     }
 
+                    # Dynamic database verification automatically overrides score to 10
+                    if ($IsLolMatch -or $IsMSMatch) { $CalculatedScore = 10 }
+
                     # Output evaluation criteria matches
                     if ($FoundPrimitives -or $IsLolMatch -or $IsMSMatch) {
                         $VersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($File.FullName)
@@ -837,12 +889,19 @@ function Scan-DriverPrimitive {
                             Write-Host "[!!!] MATCHED OFFICIAL MICROSOFT DRIVER BLOCKLIST [!!!]" -ForegroundColor Black -BackgroundColor DarkYellow
                         }
 
-                        Write-Host "SCAN MODE: [$ScanMode]" -ForegroundColor DarkCyan
-                        Write-Host "PATH:      $($File.FullName)" -ForegroundColor Cyan
-                        Write-Host "DRIVER:    $($File.Name)"
-                        Write-Host "COMPANY:   $($CompanyName)"
-                        Write-Host "INFO:      $($VersionInfo.FileDescription)"
-                        Write-Host "SHA256:    $HashSHA256" -ForegroundColor DarkGray
+                        # Apply dynamic alert color based on severity score
+                        $UiColor = "Green"
+                        if ($CalculatedScore -ge 8) { $UiColor = "Red" }
+                        elseif ($CalculatedScore -ge 5) { $UiColor = "Yellow" }
+                        elseif ($CalculatedScore -gt 1) { $UiColor = "Cyan" }
+
+                        Write-Host "THREAT SCORE: [$CalculatedScore / 10]" -ForegroundColor $UiColor -BackgroundColor Black
+                        Write-Host "SCAN MODE:    [$ScanMode]" -ForegroundColor DarkCyan
+                        Write-Host "PATH:         $($File.FullName)" -ForegroundColor Cyan
+                        Write-Host "DRIVER:       $($File.Name)"
+                        Write-Host "COMPANY:      $      ($CompanyName)"
+                        Write-Host "INFO:         $($VersionInfo.FileDescription)"
+                        Write-Host "SHA256:       $HashSHA256" -ForegroundColor DarkGray
                         
                         if ($FoundPrimitives) {
                             Write-Host "SUSPICIOUS IMPORTS:" -ForegroundColor Yellow
