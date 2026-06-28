@@ -586,7 +586,11 @@ function Scan-DriverPrimitive {
 
         [Parameter(Mandatory = $false, Position = 8)]
         [ValidateSet('Basic', 'Extended')]
-        [string]$ScanMode = 'Basic'
+        [string]$ScanMode = 'Basic',
+
+        [Parameter(Mandatory = $false, Position = 9)]
+        [ValidateRange(0, 10)]
+        [int]$MinThreatLevel = 4
     )
 
     begin {
@@ -864,7 +868,9 @@ function Scan-DriverPrimitive {
                     if ($IsLolMatch -or $IsMSMatch) { $CalculatedScore = 10 }
 
                     # Output evaluation criteria matches
-                    if ($FoundPrimitives -or $IsLolMatch -or $IsMSMatch) {
+                    if (($FoundPrimitives -or $IsLolMatch -or $IsMSMatch) -and (
+                        $CalculatedScore -ge $MinThreatLevel)) {
+
                         $VersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($File.FullName)
                         $CompanyName = $VersionInfo.CompanyName
 
